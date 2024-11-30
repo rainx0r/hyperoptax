@@ -1,4 +1,5 @@
 import abc
+from collections.abc import Callable
 from typing import Any
 
 from flax import struct
@@ -22,3 +23,11 @@ class Optimizer(abc.ABC, struct.PyTreeNode):
     def recommend(self) -> Observation: ...
 
 
+class Tuner(abc.ABC):
+    optimizer: Optimizer
+
+    @abc.abstractmethod
+    def __init__(self): ...
+
+    @abc.abstractmethod
+    def tune(self, objective_fn: Callable[[Observation], float]) -> Observation: ...
