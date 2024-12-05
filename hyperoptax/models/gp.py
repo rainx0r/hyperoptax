@@ -17,9 +17,9 @@ from hyperoptax.types import LogDict
 
 def _cov_map(
     kernel: Kernel,
-    x1s: Float[Array, "num_pts num_dims"],
-    x2s: Float[Array, "num_pts num_dims"] | None = None,
-) -> Float[Array, "num_pts num_pts"]:
+    x1s: Float[Array, "num_x1_pts num_dims"],
+    x2s: Float[Array, "num_x2_pts num_dims"] | None = None,
+) -> Float[Array, "num_x1_pts num_x2_pts"]:
     if x2s is None:
         return jax.vmap(lambda x: jax.vmap(lambda y: kernel(x, y))(x1s))(x1s)
     else:
@@ -77,7 +77,7 @@ class GaussianProcess(nn.Module):
         self,
         x: Float[Array, "num_pts num_dims"],
         y: Float[Array, "num_pts num_dims"],
-        x_new: Float[Array, "num_pts num_dims"],
+        x_new: Float[Array, "num_new_pts num_dims"],
     ) -> distrax.Distribution:
         amp = jax.nn.softplus(self.amp)
 
