@@ -7,6 +7,7 @@ requires-python = "~=3.12"
 dependencies = [
     "altair[all]>=5.5.0",
     "chex>=0.1.87",
+    "distrax>=0.1.5",
     "flax>=0.8.5",
     "jaxtyping>=0.2.36",
     "wandb>=0.18.7",
@@ -16,17 +17,17 @@ dependencies = [
 cpu = ["jax>=0.4.35"]
 metal = ["jax>=0.4.26", "jax-metal>=0.1.0; sys_platform == 'darwin'"]
 cuda12 = ["jax[cuda12]>=0.4.35"]
-tpu = ["jax[tpu]>=0.4.35"]
+# tpu = ["jax[tpu]>=0.4.35"]
 
 [tool.uv]
-prerelease = "allow"
-find-links = ["https://storage.googleapis.com/jax-releases/libtpu_releases.html"]
+# prerelease = "allow"
+# find-links = ["https://storage.googleapis.com/jax-releases/libtpu_releases.html"]
 conflicts = [
   [
     { extra = "cpu" },
     { extra = "metal" },
     { extra = "cuda12" },
-    { extra = "tpu" },
+    # { extra = "tpu" },
   ],
 ]
 

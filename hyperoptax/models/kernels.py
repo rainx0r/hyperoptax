@@ -1,24 +1,28 @@
 # Kernels based on Pyro https://github.com/pyro-ppl/pyro/tree/dev/pyro/contrib/gp/kernels
 import abc
 
-import jax.numpy as jnp
-from jaxtyping import Float, Array
 import chex
+import flax.linen as nn
+import jax
+import jax.numpy as jnp
+from jaxtyping import Array, Float
 
 KernelOperand = Float[Array, "num_dims"]
-CovarianceMatrix = Float[Array, "num_dims num_dims"]
+KernelOutput = Float[Array, ""]
 
 
-class Kernel(abc.ABC):
+class Kernel(abc.ABC, nn.Module):
     def __init__(self) -> None:
         pass
 
     @abc.abstractmethod
-    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix: ...
+    @nn.compact
+    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput: ...
 
     def __add__(self, other: "Kernel") -> "Kernel":
         class KernelSum(Kernel):
-            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix:
+            @nn.compact
+            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
                 return self(x1, x2) + other(x1, x2)
 
             def __repr__(_self) -> str:
@@ -28,7 +32,8 @@ class Kernel(abc.ABC):
 
     def __sub__(self, other: "Kernel") -> "Kernel":
         class KernelDifference(Kernel):
-            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix:
+            @nn.compact
+            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
                 return self(x1, x2) - other(x1, x2)
 
             def __repr__(_self) -> str:
@@ -38,7 +43,8 @@ class Kernel(abc.ABC):
 
     def __mul__(self, other: "Kernel") -> "Kernel":
         class KernelProduct(Kernel):
-            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix:
+            @nn.compact
+            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
                 return self(x1, x2) * other(x1, x2)
 
             def __repr__(_self) -> str:
@@ -48,7 +54,8 @@ class Kernel(abc.ABC):
 
     def __truediv__(self, other: "Kernel") -> "Kernel":
         class KernelDivision(Kernel):
-            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix:
+            @nn.compact
+            def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
                 return self(x1, x2) / (other(x1, x2) + 1e-8)
 
             def __repr__(_self) -> str:
@@ -62,35 +69,44 @@ class Matern(Kernel):
 
     # TODO: Implement Matern v=1/2 and v=5/2 kernels
 
-    variance: Float[Array, " #num_dims"]
-    lengthscale: Float[Array, " #num_dims"]
+    isotropic: bool = True
+    init_variance: jax.nn.initializers.Initializer = jax.nn.initializers.constant(1.0)
+    init_lengthscale: jax.nn.initializers.Initializer = jax.nn.initializers.constant(
+        0.0
+    )
 
-    def __init__(
-        self,
-        variance: Float[Array, " #num_dims"] | None = None,
-        lengthscale: Float[Array, " #num_dims"] | None = None,
-    ) -> None:
-        self.variance = variance or jnp.array([1.0])
-        self.lengthscale = lengthscale or jnp.array([1.0])
-
-    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix:
+    @nn.compact
+    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
         chex.assert_equal_size(x1, x2)
 
-        dist = jnp.sqrt((x1[:, None] - x2) ** 2)
-        sqrt3_d_rho = (jnp.sqrt(3) * dist) / (self.lengthscale + 1e-8)
-        return self.variance * (1 + sqrt3_d_rho) * jnp.exp(-sqrt3_d_rho)
+        param_shape = (x1.shape[-1],) if self.isotropic else (1,)
+
+        ls = jax.nn.softplus(
+            self.param("lengthscale", self.init_lengthscale, param_shape)
+        )
+        var = jax.nn.softplus(self.param("variance", self.init_variance, (1,)))
+
+        x1 /= ls + 1e-8
+        x2 /= ls + 1e-8
+
+        # ||x - y||^2 = ||x||^2 - 2 <x,y> + ||y||^2
+        dist = (
+            jnp.sum(x1**2, axis=-1)
+            - 2 * jnp.einsum("...n,...n->...", x1, x2)
+            + jnp.sum(x2**2, axis=-1)
+        )
+
+        sqrt3_d = jnp.sqrt(3) * dist
+        return var * (1 + sqrt3_d) * jnp.exp(-sqrt3_d)
 
 
 class Linear(Kernel):
     variance: Float[Array, " #num_dims"]
 
-    def __init__(
-        self,
-        variance: Float[Array, " #num_dims"] | None = None,
-    ) -> None:
-        self.variance = variance or jnp.array([1.0])
-
-    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> CovarianceMatrix:
+    @nn.compact
+    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
         chex.assert_equal_size(x1, x2)
 
-        return self.variance * (x1[:, None] @ x2[:, None].T)
+        var = self.param("variance", self.init_variance, (1,))
+
+        return var * jnp.einsum("...n,...n->...", x1, x2)
