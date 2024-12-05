@@ -12,56 +12,66 @@ KernelOutput = Float[Array, ""]
 
 
 class Kernel(abc.ABC, nn.Module):
-    def __init__(self) -> None:
-        pass
-
     @abc.abstractmethod
     @nn.compact
     def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput: ...
 
     def __add__(self, other: "Kernel") -> "Kernel":
         class KernelSum(Kernel):
-            @nn.compact
+            def setup(_self):
+                _self.k1 = self
+                _self.k2 = other
+
             def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
-                return self(x1, x2) + other(x1, x2)
+                return _self.k1(x1, x2) + _self.k2(x1, x2)
 
             def __repr__(_self) -> str:
-                return f"{self.__repr__()} + {other.__repr__()}"
+                return f"{_self.k1.__repr__()} + {_self.k2.__repr__()}"
 
-        return KernelSum()
+        return KernelSum(name=f"{self.name} + {other.name}", parent=self.parent)
 
     def __sub__(self, other: "Kernel") -> "Kernel":
         class KernelDifference(Kernel):
-            @nn.compact
+            def setup(_self):
+                _self.k1 = self
+                _self.k2 = other
+
             def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
-                return self(x1, x2) - other(x1, x2)
+                return _self.k1(x1, x2) - _self.k2(x1, x2)
 
             def __repr__(_self) -> str:
-                return f"{self.__repr__()} - {other.__repr__()}"
+                return f"{_self.k1.__repr__()} - {_self.k2.__repr__()}"
 
-        return KernelDifference()
+        return KernelDifference(name=f"{self.name} - {other.name}", parent=self.parent)
 
     def __mul__(self, other: "Kernel") -> "Kernel":
         class KernelProduct(Kernel):
-            @nn.compact
+            def setup(_self):
+                _self.k1 = self
+                _self.k2 = other
+
             def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
-                return self(x1, x2) * other(x1, x2)
+                return _self.k1(x1, x2) * _self.k2(x1, x2)
 
             def __repr__(_self) -> str:
-                return f"{self.__repr__()} * {other.__repr__()}"
+                return f"{_self.k1.__repr__()} * {_self.k2.__repr__()}"
 
-        return KernelProduct()
+        return KernelProduct(name=f"{self.name} * {other.name}", parent=self.parent)
 
     def __truediv__(self, other: "Kernel") -> "Kernel":
         class KernelDivision(Kernel):
-            @nn.compact
+            def setup(_self):
+                _self.k1 = self
+                _self.k2 = other
+
             def __call__(_self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
-                return self(x1, x2) / (other(x1, x2) + 1e-8)
+                return _self.k1(x1, x2) / _self.k2(x1, x2)
 
             def __repr__(_self) -> str:
-                return f"{self.__repr__()} / {other.__repr__()}"
+                return f"{_self.k1.__repr__()} / {_self.k2.__repr__()}"
 
-        return KernelDivision()
+
+        return KernelDivision(name=f"{self.name} / {other.name}", parent=self.parent)
 
 
 class Matern(Kernel):
@@ -77,7 +87,7 @@ class Matern(Kernel):
 
     @nn.compact
     def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
-        chex.assert_equal_size(x1, x2)
+        chex.assert_equal_size((x1, x2))
 
         param_shape = (x1.shape[-1],) if self.isotropic else (1,)
 
@@ -101,11 +111,11 @@ class Matern(Kernel):
 
 
 class Linear(Kernel):
-    variance: Float[Array, " #num_dims"]
+    init_variance: jax.nn.initializers.Initializer = jax.nn.initializers.constant(1.0)
 
     @nn.compact
     def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
-        chex.assert_equal_size(x1, x2)
+        chex.assert_equal_size((x1, x2))
 
         var = self.param("variance", self.init_variance, (1,))
 

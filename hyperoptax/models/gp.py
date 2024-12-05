@@ -10,8 +10,8 @@ import optax
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 from jaxtyping import Array, Float, PRNGKeyArray
-from kernels import Kernel
 
+from hyperoptax.models.kernels import Kernel
 from hyperoptax.types import LogDict
 
 
@@ -27,14 +27,16 @@ def _cov_map(
 
 
 class GaussianProcess(nn.Module):
-    kernel: Kernel
+    kernel: Callable[[nn.Module], Kernel]
 
     def setup(self):
+        self.kernel_fn = self.kernel(self)
+
         self.amp = self.param("amp", nn.zeros_init(), (1, 1))
 
         # TODO: Init of this should be -5 (?)
         # CARBS has 1.0e-4 for jitter and lengthscale gets init according to the search centre
-        self.noise = self.param("noise", nn.zeros_init(), (1, 1))
+        self.noise = self.param("noise", jax.nn.initializers.constant(-5), (1, 1))
 
     def _forward_pass(
         self,
@@ -47,7 +49,7 @@ class GaussianProcess(nn.Module):
         noise = jax.nn.softplus(self.noise)
 
         # TODO: is this as fast as doing one big vmap for all pairs?
-        cov = amp * _cov_map(self.kernel, x) + jnp.eye(x.shape[0]) * (noise + 1e-6)
+        cov = amp * _cov_map(self.kernel_fn, x) + jnp.eye(x.shape[0]) * (noise + 1e-6)
         chol = jax.scipy.linalg.cho_factor(cov, lower=True)
         kinvy = jax.scipy.linalg.cho_solve(chol, y)
 
@@ -83,13 +85,13 @@ class GaussianProcess(nn.Module):
 
         chol, kinvy = self._forward_pass(amp, x, y)
 
-        cross_cov = amp * _cov_map(self.kernel, x, x_new)
+        cross_cov = amp * _cov_map(self.kernel_fn, x, x_new)
         mu = jnp.dot(cross_cov.T, kinvy) + y.mean()
 
         # TODO: numpyro's example has cross_cov.T @ v, not v.T @ v
         # check which is correct
         v = jax.scipy.linalg.cho_solve(chol, cross_cov)
-        var = amp * _cov_map(self.kernel, x_new) - jnp.dot(v.T, v)
+        var = amp * _cov_map(self.kernel_fn, x_new) - jnp.dot(v.T, v)
 
         return distrax.MultivariateNormalDiag(
             loc=mu, scale_diag=jnp.sqrt(jnp.diag(var))
@@ -116,13 +118,13 @@ def _update(
 
 
 def gaussian_process_regression(
-    kernel: Kernel,
+    kernel: Callable[[nn.Module], Kernel],
     x: Float[Array, "num_pts num_dims"],
     y: Float[Array, "num_pts num_dims"],
     key: PRNGKeyArray,
     train_steps: int = 1000,
     learning_rate: float = 0.01,
-):
+) -> GPTrainState:
     model_obj = GaussianProcess(kernel)
 
     gp_init_key, key = jax.random.split(key)
