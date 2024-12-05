@@ -1,11 +1,18 @@
 # Based on https://github.com/jax-ml/jax/blob/main/examples/gaussian_process_regression.py
 
+from collections.abc import Callable
+
 import distrax
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+import optax
+from flax.core import FrozenDict
+from flax.training.train_state import TrainState
+from jaxtyping import Array, Float, PRNGKeyArray
 from kernels import Kernel
+
+from hyperoptax.types import LogDict
 
 
 def _cov_map(
@@ -87,3 +94,50 @@ class GaussianProcess(nn.Module):
         return distrax.MultivariateNormalDiag(
             loc=mu, scale_diag=jnp.sqrt(jnp.diag(var))
         )
+
+
+class GPTrainState(TrainState):
+    predict_fn: Callable[[FrozenDict, jax.Array, jax.Array, jax.Array], jax.Array]
+
+
+@jax.jit
+def _update(
+    model: TrainState,
+    x: Float[Array, "num_pts num_dims"],
+    y: Float[Array, "num_pts num_dims"],
+) -> tuple[TrainState, LogDict]:
+    def loss_fn(params: FrozenDict, x: jax.Array, y: jax.Array) -> Float[Array, ""]:
+        return model.apply_fn(params, x, y)
+
+    loss, grads = jax.value_and_grad(loss_fn)(model.params, x, y)
+    model = model.apply_gradients(grads=grads)
+
+    return model, {"gp_loss": loss}
+
+
+def gaussian_process_regression(
+    kernel: Kernel,
+    x: Float[Array, "num_pts num_dims"],
+    y: Float[Array, "num_pts num_dims"],
+    key: PRNGKeyArray,
+    train_steps: int = 1000,
+    learning_rate: float = 0.01,
+):
+    model_obj = GaussianProcess(kernel)
+
+    gp_init_key, key = jax.random.split(key)
+
+    model = GPTrainState.create(
+        apply_fn=model_obj.apply,
+        predict_fn=model_obj.predict,
+        params=model_obj.init(gp_init_key, x, y),
+        tx=optax.adam(learning_rate=learning_rate),
+    )
+
+    for step in range(train_steps):
+        model, logs = _update(model, x, y)
+
+        if step % 50 == 0:
+            print("Step: %d, logs: %s" % (step, str(logs)))
+
+    return model
