@@ -1,6 +1,7 @@
 # Based on https://github.com/jax-ml/jax/blob/main/examples/gaussian_process_regression.py
 
 from collections.abc import Callable
+from functools import partial
 
 import distrax
 import flax.linen as nn
@@ -8,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import optax
 from flax.core import FrozenDict
+from flax import struct
 from flax.training.train_state import TrainState
 from jaxtyping import Array, Float, PRNGKeyArray
 
@@ -57,7 +59,7 @@ class GaussianProcess(nn.Module):
 
     def __call__(
         self, x: Float[Array, "num_pts num_dims"], y: Float[Array, " num_pts"]
-    ) -> Float[Array, " num_pts1"]:
+    ) -> Float[Array, " num_pts"]:
         """Get the marginal likelihood of the function output y at point x"""
         num_pts = x.shape[0]
         amp = jax.nn.softplus(self.amp)
@@ -78,7 +80,7 @@ class GaussianProcess(nn.Module):
     def predict(
         self,
         x: Float[Array, "num_pts num_dims"],
-        y: Float[Array, "num_pts num_dims"],
+        y: Float[Array, " num_pts"],
         x_new: Float[Array, "num_new_pts num_dims"],
     ) -> distrax.Distribution:
         amp = jax.nn.softplus(self.amp)
@@ -99,15 +101,15 @@ class GaussianProcess(nn.Module):
 
 
 class GPTrainState(TrainState):
-    predict_fn: Callable[[FrozenDict, jax.Array, jax.Array, jax.Array], jax.Array]
+    predict_fn: Callable[[FrozenDict, jax.Array, jax.Array, jax.Array], jax.Array] = struct.field(pytree_node=False)
 
 
 @jax.jit
 def _update(
-    model: TrainState,
+    model: GPTrainState,
     x: Float[Array, "num_pts num_dims"],
     y: Float[Array, "num_pts num_dims"],
-) -> tuple[TrainState, LogDict]:
+) -> tuple[GPTrainState, LogDict]:
     def loss_fn(params: FrozenDict, x: jax.Array, y: jax.Array) -> Float[Array, ""]:
         return model.apply_fn(params, x, y)
 
@@ -131,7 +133,7 @@ def gaussian_process_regression(
 
     model = GPTrainState.create(
         apply_fn=model_obj.apply,
-        predict_fn=model_obj.predict,
+        predict_fn=partial(model_obj.apply, method=GaussianProcess.predict),
         params=model_obj.init(gp_init_key, x, y),
         tx=optax.adam(learning_rate=learning_rate),
     )

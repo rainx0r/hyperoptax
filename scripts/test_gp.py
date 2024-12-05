@@ -12,10 +12,10 @@ def main() -> None:
     key, fun_key = jax.random.split(jax.random.PRNGKey(42))
     key, x_key = jax.random.split(key)
 
-    def y_fun(x):
+    def y_fun(x: jax.Array) -> jax.Array:
         return jnp.sin(x) + 0.1 * jax.random.normal(fun_key, shape=(x.shape[0], 1))
 
-    x = (jax.random.uniform(x_key, shape=(7, 1)) * 4.0) + 1
+    x = (jax.random.uniform(x_key, shape=(num_x, 1)) * 4.0) + 1
     y = y_fun(x)
     xtest = jnp.linspace(0, 6.0, 200)[:, None]
 
@@ -23,7 +23,7 @@ def main() -> None:
     gp = gaussian_process_regression(
         kernel=lambda x: Matern(parent=x) + Linear(parent=x),
         x=x,
-        y=y,
+        y=y.reshape(-1),
         train_steps=1000,
         learning_rate=lr,
         key=gp_train_key,

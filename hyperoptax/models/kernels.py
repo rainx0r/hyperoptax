@@ -16,6 +16,10 @@ class Kernel(abc.ABC, nn.Module):
     @nn.compact
     def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput: ...
 
+    @property
+    def _default_name(self) -> str:
+        return self.__class__.__name__
+
     def __add__(self, other: "Kernel") -> "Kernel":
         class KernelSum(Kernel):
             def setup(_self):
@@ -28,7 +32,9 @@ class Kernel(abc.ABC, nn.Module):
             def __repr__(_self) -> str:
                 return f"{_self.k1.__repr__()} + {_self.k2.__repr__()}"
 
-        return KernelSum(name=f"{self.name} + {other.name}", parent=self.parent)
+        return KernelSum(
+            name=f"{self._default_name} + {other._default_name}", parent=self.parent
+        )
 
     def __sub__(self, other: "Kernel") -> "Kernel":
         class KernelDifference(Kernel):
@@ -70,7 +76,6 @@ class Kernel(abc.ABC, nn.Module):
             def __repr__(_self) -> str:
                 return f"{_self.k1.__repr__()} / {_self.k2.__repr__()}"
 
-
         return KernelDivision(name=f"{self.name} / {other.name}", parent=self.parent)
 
 
@@ -82,7 +87,7 @@ class Matern(Kernel):
     isotropic: bool = True
     init_variance: jax.nn.initializers.Initializer = jax.nn.initializers.constant(1.0)
     init_lengthscale: jax.nn.initializers.Initializer = jax.nn.initializers.constant(
-        0.0
+        1.0
     )
 
     @nn.compact
@@ -94,7 +99,7 @@ class Matern(Kernel):
         ls = jax.nn.softplus(
             self.param("lengthscale", self.init_lengthscale, param_shape)
         )
-        var = jax.nn.softplus(self.param("variance", self.init_variance, (1,)))
+        var = jax.nn.softplus(self.param("variance", self.init_variance, ()))
 
         x1 /= ls + 1e-8
         x2 /= ls + 1e-8
@@ -105,9 +110,46 @@ class Matern(Kernel):
             - 2 * jnp.einsum("...n,...n->...", x1, x2)
             + jnp.sum(x2**2, axis=-1)
         )
+        dist = jnp.sqrt(jax.nn.relu(dist))
 
         sqrt3_d = jnp.sqrt(3) * dist
         return var * (1 + sqrt3_d) * jnp.exp(-sqrt3_d)
+
+
+class RBF(Kernel):
+    """An RBF Kernel"""
+
+    # TODO: Implement Matern v=1/2 and v=5/2 kernels
+
+    isotropic: bool = True
+    init_variance: jax.nn.initializers.Initializer = jax.nn.initializers.constant(1.0)
+    init_lengthscale: jax.nn.initializers.Initializer = jax.nn.initializers.constant(
+        1.0
+    )
+
+    @nn.compact
+    def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
+        chex.assert_equal_size((x1, x2))
+
+        param_shape = (x1.shape[-1],) if self.isotropic else (1,)
+
+        ls = jax.nn.softplus(
+            self.param("lengthscale", self.init_lengthscale, param_shape)
+        )
+        var = jax.nn.softplus(self.param("variance", self.init_variance, ()))
+
+        x1 /= ls + 1e-8
+        x2 /= ls + 1e-8
+
+        # ||x - y||^2 = ||x||^2 - 2 <x,y> + ||y||^2
+        dist = (
+            jnp.sum(x1**2, axis=-1)
+            - 2 * jnp.einsum("...n,...n->...", x1, x2)
+            + jnp.sum(x2**2, axis=-1)
+        )
+        dist = jnp.sqrt(jax.nn.relu(dist))
+
+        return var * jnp.exp(-0.5 * dist)
 
 
 class Linear(Kernel):
@@ -117,6 +159,6 @@ class Linear(Kernel):
     def __call__(self, x1: KernelOperand, x2: KernelOperand) -> KernelOutput:
         chex.assert_equal_size((x1, x2))
 
-        var = self.param("variance", self.init_variance, (1,))
+        var = jax.nn.softplus(self.param("variance", self.init_variance, ()))
 
         return var * jnp.einsum("...n,...n->...", x1, x2)
