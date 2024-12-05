@@ -1,11 +1,12 @@
 [project]
 name = "hyperoptax"
 version = "0.1.0"
-description = "Black-box optimisers in JAX for Hyperparameter Optimisation mainly."
+description = "Black-box optimisers in JAX."
 readme = "README.md"
 requires-python = "~=3.12"
 dependencies = [
     "altair[all]>=5.5.0",
+    "chex>=0.1.87",
     "flax>=0.8.5",
     "jaxtyping>=0.2.36",
     "wandb>=0.18.7",
@@ -28,3 +29,6 @@ conflicts = [
     { extra = "tpu" },
   ],
 ]
+
+[tool.ruff]
+ignore = ["F722"]
